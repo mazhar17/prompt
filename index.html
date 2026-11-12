@@ -234,10 +234,10 @@
           <div class="field">
             <label for="model">Model</label>
             <div class="row">
-              <input id="model" type="text" list="model-list" autocomplete="off" spellcheck="false" placeholder="Model name" />
+              <select id="model"></select>
               <button id="load-models" type="button">Load models</button>
             </div>
-            <datalist id="model-list"></datalist>
+            <input id="model-custom" type="text" hidden autocomplete="off" spellcheck="false" placeholder="Type the model name" aria-label="Model name" />
           </div>
           <div class="field wide">
             <label for="api-key"><span id="key-label">API key</span></label>
@@ -760,8 +760,25 @@
         const statusEl = $("status");
         const setup = $("setup");
         const providerSelect = $("provider");
-        const modelInput = $("model");
-        const modelList = $("model-list");
+        // The model is chosen from a list; "Other…" reveals a box for typing a name.
+        const modelSelect = $("model");
+        const modelCustom = $("model-custom");
+        const CUSTOM = "__custom__";
+        const modelInput = {
+          get value() {
+            return (modelSelect.value === CUSTOM ? modelCustom.value : modelSelect.value).trim();
+          },
+          set value(name) {
+            const known = [...modelSelect.options].some((option) => option.value === name && option.value !== CUSTOM);
+            modelSelect.value = known || !name ? name : CUSTOM;
+            modelCustom.value = modelSelect.value === CUSTOM ? name : "";
+            modelCustom.hidden = modelSelect.value !== CUSTOM;
+          },
+        };
+        modelSelect.addEventListener("change", () => {
+          modelCustom.hidden = modelSelect.value !== CUSTOM;
+          if (!modelCustom.hidden) modelCustom.focus();
+        });
         const loadBtn = $("load-models");
         const keyInput = $("api-key");
         const remember = $("remember");
@@ -825,12 +842,16 @@
         }
 
         function setModelOptions(names) {
-          modelList.replaceChildren(
-            ...names.map((name) => {
-              const option = document.createElement("option");
-              option.value = name;
-              return option;
-            }),
+          const make = (value, text) => {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = text;
+            return option;
+          };
+          modelSelect.replaceChildren(
+            make("", names.length ? "Choose a model…" : "Click “Load models”"),
+            ...names.map((name) => make(name, name)),
+            make(CUSTOM, "Other (type a name)…"),
           );
         }
 
@@ -842,19 +863,20 @@
           $("key-link").href = info.keyUrl;
           keyInput.value = "";
           keyInput.placeholder = currentKey() ? "Key saved. Paste a new one to replace it." : "Paste your key here";
-          modelInput.value = models[providerId] || info.defaultModel;
           setModelOptions(info.suggested);
+          modelInput.value = models[providerId] || info.defaultModel;
           refresh();
         }
 
         function saveModel() {
-          models[providerId] = modelInput.value.trim();
+          models[providerId] = modelInput.value;
           store.set(MODELS_STORE, models);
         }
 
-        async function loadModels(quiet = false) {
+        // Errors are always shown; "announce" controls only the success message.
+        async function loadModels(announce = true) {
           if (!currentKey()) {
-            if (!quiet) setStatus("Save your API key first, then load the models.", "error");
+            setStatus("Save your API key first, then load the models.", "error");
             return;
           }
           const forProvider = providerId;
@@ -862,12 +884,17 @@
           try {
             const names = await listModels({ provider: forProvider, apiKey: currentKey() });
             if (forProvider !== providerId) return;
+            if (names.length === 0) {
+              setStatus("The provider returned no usable models for this key. Choose “Other” and type a model name.", "error");
+              return;
+            }
+            const current = modelInput.value;
             setModelOptions(names);
-            modelInput.value = pickModel(forProvider, names, modelInput.value.trim());
+            modelInput.value = pickModel(forProvider, names, current);
             saveModel();
-            if (!quiet) setStatus(names.length + " models loaded. Choose one in the Model box.", "ok");
+            if (announce) setStatus(names.length + " models loaded. Pick one in the Model list.", "ok");
           } catch (error) {
-            if (!quiet) setStatus(error instanceof EnhancerError ? error.message : "Could not load the models.", "error");
+            if (forProvider === providerId) setStatus(error instanceof EnhancerError ? error.message : "Could not load the models.", "error");
           } finally {
             loadBtn.textContent = "Load models";
           }
@@ -949,7 +976,8 @@
           loadModels(true);
         });
 
-        modelInput.addEventListener("change", saveModel);
+        modelSelect.addEventListener("change", saveModel);
+        modelCustom.addEventListener("change", saveModel);
         loadBtn.addEventListener("click", () => loadModels());
 
         $("save-key").addEventListener("click", () => {
