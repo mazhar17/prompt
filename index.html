@@ -712,9 +712,24 @@
 
           const enhanced = cleanOutput(provider.parseResponse(result.data), rawPrompt);
           if (enhanced === "") {
-            throw new EnhancerError("EMPTY_OUTPUT", "The model returned no text. Try again, or try another model.");
+            throw new EnhancerError(
+              "EMPTY_OUTPUT",
+              "The model returned no text. Try again, or try another model. (Details: " + describeReply(result.data) + ")",
+            );
           }
           return enhanced;
+        }
+
+        // A short, key-free summary of a reply, used when it contains no usable text.
+        function describeReply(data) {
+          let text;
+          if (data === null || data === undefined) return "no reply body";
+          try {
+            text = JSON.stringify(data,(name, value) => (typeof value === "string" && value.length > 80 ? value.slice(0, 80) + "…" : value));
+          } catch {
+            text = "";
+          }
+          return (text || "no reply body").replace(/(?:AIza|sk-|gsk_)[\w-]{8,}/g, "[key]").slice(0, 400);
         }
 
         /** Asks the provider which models this key can use. Returns sorted model names. */

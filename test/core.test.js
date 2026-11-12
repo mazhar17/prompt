@@ -411,6 +411,17 @@ test("every API failure shows the HTTP status and the provider's message, with k
   await assert.rejects(run("gemini", "hi", fakeFetch({ status: 502, data: null })), /HTTP 502, no details/);
 });
 
+test("an empty reply is reported with a short summary of what the provider sent", async () => {
+  const reply = { candidates: [{ finishReason: "OTHER" }], note: "AIzaSyA1234567890abcdefgh" };
+  await assert.rejects(run("gemini", "hi", fakeFetch({ data: reply })), (error) => {
+    assert.equal(error.code, "EMPTY_OUTPUT");
+    assert.match(error.message, /finishReason":"OTHER/);
+    assert.ok(!error.message.includes("AIzaSyA1234567890abcdefgh"));
+    return true;
+  });
+  await assert.rejects(run("openai", "hi", fakeFetch({ data: null })), /no reply body/);
+});
+
 test("temporary overload (503) is retried automatically, then reported with advice", async () => {
   const overloaded = { status: 503, data: { error: { message: "The model is overloaded." } } };
 
