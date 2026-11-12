@@ -616,7 +616,13 @@
 
         // ---- Network ---------------------------------------------------------
 
-        async function send(fetchFn, request) {
+        // Providers answer 500, 502, 503, 504 or 529 when they are briefly overloaded.
+        // These usually clear within seconds, so a request is retried a few times.
+        const RETRY_STATUSES = [500, 502, 503, 504, 529];
+        const RETRY_DELAYS_MS = [1500, 4000, 8000];
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        async function sendOnce(fetchFn, request) {
           const init = { method: request.body ? "POST" : "GET", headers: request.headers };
           if (request.body) init.body = JSON.stringify(request.body);
           let response;
@@ -627,6 +633,16 @@
           }
           const data = await response.json().catch(() => null);
           return { status: response.status, ok: response.ok, data };
+        }
+
+        async function send(fetchFn, request, { delays = RETRY_DELAYS_MS, wait = sleep } = {}) {
+          let result = await sendOnce(fetchFn, request);
+          for (const delay of delays) {
+            if (!RETRY_STATUSES.includes(result.status)) break;
+            await wait(delay);
+            result = await sendOnce(fetchFn, request);
+          }
+          return result;
         }
 
         function errorDetail(data) {
@@ -647,7 +663,12 @@
           if (status === 404) return new EnhancerError("MODEL", "Model not found. Click “Load models” and pick one from the list.");
           if (status === 402) return new EnhancerError("QUOTA", "This key has no credit left with " + label + ".");
           if (status === 429) return new EnhancerError("RATE_LIMITED", "Rate limit or quota reached for this key. Wait a moment, or try another model or provider.");
-          if (status >= 500) return new EnhancerError("SERVICE", "The AI service is busy or unavailable (" + status + "). Try again shortly.");
+          if (status >= 500) {
+            return new EnhancerError(
+              "SERVICE",
+              label + " is busy or unavailable (" + status + "), even after retrying. Wait a minute and try again, or choose another model (click “Load models”) or another provider.",
+            );
+          }
           return new EnhancerError("API_ERROR", "The AI service rejected the request (" + status + "): " + detail);
         }
 
@@ -670,11 +691,12 @@
           const fetchFn = options.fetch || fetch;
 
           let request = provider.buildRequest(rawPrompt, { model, apiKey });
-          let result = await send(fetchFn, request);
+          const retry = options.retryDelays ? { delays: options.retryDelays } : undefined;
+          let result = await send(fetchFn, request, retry);
           if (result.status === 400 && request.optional) {
             // An optional beta feature was rejected; retry once without it.
             request = provider.buildRequest(rawPrompt, { model, apiKey, fallbacks: false });
-            result = await send(fetchFn, request);
+            result = await send(fetchFn, request, retry);
           }
           if (!result.ok) throw apiError(result.status, result.data, provider.label);
 

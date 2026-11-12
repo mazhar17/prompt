@@ -51,8 +51,9 @@ function fakeFetch(...replies) {
 }
 
 const ok = (providerId, text = "Enhanced.") => fakeFetch({ data: successBody(providerId, text) });
+// retryDelays: [] means "do not retry", so failure tests stay instant.
 const run = (providerId, raw, fetchFn, options = {}) =>
-  enhancePrompt(raw, { provider: providerId, apiKey: KEY, model: "some-model", fetch: fetchFn, ...options });
+  enhancePrompt(raw, { provider: providerId, apiKey: KEY, model: "some-model", fetch: fetchFn, retryDelays: [], ...options });
 
 /** Where each provider's request puts the system prompt and the user's text. */
 function slots(providerId, body) {
@@ -395,6 +396,31 @@ test("anthropic: the refusal fallback is used only on supporting models and retr
   assert.equal(retry.calls.length, 2);
   assert.equal(retry.calls[1].body.fallbacks, undefined);
   assert.equal(retry.calls[1].headers["anthropic-beta"], undefined);
+});
+
+test("temporary overload (503) is retried automatically, then reported with advice", async () => {
+  const overloaded = { status: 503, data: { error: { message: "The model is overloaded." } } };
+
+  // Recovers on the third try: the user never sees an error.
+  const recovers = fakeFetch(overloaded, overloaded, { data: successBody("gemini", "Hello!") });
+  assert.equal(await run("gemini", "hi", recovers, { retryDelays: [0, 0, 0] }), "Hello!");
+  assert.equal(recovers.calls.length, 3);
+
+  // Keeps failing: gives up after the retries and says what to do next.
+  const stays = fakeFetch(overloaded);
+  await assert.rejects(run("gemini", "hi", stays, { retryDelays: [0, 0, 0] }), (error) => {
+    assert.equal(error.code, "SERVICE");
+    assert.match(error.message, /Load models/);
+    return true;
+  });
+  assert.equal(stays.calls.length, 4, "one attempt plus three retries");
+
+  // Errors that retrying cannot fix are not retried.
+  for (const status of [400, 401, 403, 404, 429]) {
+    const once = fakeFetch({ status, data: { error: { message: "x" } } });
+    await assert.rejects(run("gemini", "hi", once, { retryDelays: [0, 0, 0] }));
+    assert.equal(once.calls.length, 1, `status ${status} is not retried`);
+  }
 });
 
 test("network failures become a user-facing error", async () => {
