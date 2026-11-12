@@ -645,16 +645,26 @@
           return result;
         }
 
+        // The provider's own explanation, with anything shaped like an API key hidden.
         function errorDetail(data) {
           const error = Array.isArray(data) ? data[0] && data[0].error : data && data.error;
-          if (error && typeof error === "object" && error.message) return String(error.message);
-          if (typeof error === "string") return error;
-          if (data && typeof data.message === "string") return data.message;
-          if (data && typeof data.detail === "string") return data.detail;
-          return "no details";
+          let text = "no details";
+          if (error && typeof error === "object" && error.message) text = String(error.message);
+          else if (typeof error === "string") text = error;
+          else if (data && typeof data.message === "string") text = data.message;
+          else if (data && typeof data.detail === "string") text = data.detail;
+          return text.replace(/(?:AIza|sk-|gsk_)[\w-]{8,}/g, "[key]");
         }
 
+        // Every failure ends with the HTTP status and the provider's own message, so a
+        // problem can be diagnosed from the screen alone. Anything shaped like a key is hidden.
         function apiError(status, data, label) {
+          const error = describeError(status, data, label);
+          error.message += " (Details: HTTP " + status + ", " + errorDetail(data).slice(0, 300) + ")";
+          return error;
+        }
+
+        function describeError(status, data, label) {
           const detail = errorDetail(data).slice(0, 300);
           if (status === 401 || (status === 400 && /api[ _-]?key/i.test(detail))) {
             return new EnhancerError("AUTH", "The " + label + " API key was not accepted. Check it under “AI provider and API key”.");

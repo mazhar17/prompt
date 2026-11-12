@@ -398,6 +398,19 @@ test("anthropic: the refusal fallback is used only on supporting models and retr
   assert.equal(retry.calls[1].headers["anthropic-beta"], undefined);
 });
 
+test("every API failure shows the HTTP status and the provider's message, with keys hidden", async () => {
+  for (const status of [400, 401, 403, 404, 429, 500, 503]) {
+    const data = { error: { message: "Quota exceeded for model. Key AIzaSyA1234567890abcdefgh was used." } };
+    await assert.rejects(run("gemini", "hi", fakeFetch({ status, data })), (error) => {
+      assert.match(error.message, new RegExp(`HTTP ${status}, Quota exceeded for model`));
+      assert.ok(!error.message.includes("AIzaSyA1234567890abcdefgh"), "key-shaped text is hidden");
+      return true;
+    });
+  }
+  // A response with no readable body still reports the status.
+  await assert.rejects(run("gemini", "hi", fakeFetch({ status: 502, data: null })), /HTTP 502, no details/);
+});
+
 test("temporary overload (503) is retried automatically, then reported with advice", async () => {
   const overloaded = { status: 503, data: { error: { message: "The model is overloaded." } } };
 
