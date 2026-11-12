@@ -1,22 +1,14 @@
 {
   "name": "prompt-enhancer",
-  "version": "1.0.0",
-  "description": "Rewrites a raw prompt into a clear, polished, well-structured prompt for another AI model.",
+  "version": "2.0.0",
+  "description": "A single-page tool that rewrites a raw prompt into a clear, polished prompt for another AI model.",
   "type": "module",
   "private": true,
   "engines": {
     "node": ">=22"
   },
-  "bin": {
-    "prompt-enhancer": "src/cli.js"
-  },
   "scripts": {
-    "start": "node --env-file-if-exists=.env src/server.js",
-    "enhance": "node --env-file-if-exists=.env src/cli.js",
-    "test": "node --test test/enhancer.test.js test/server.test.js",
+    "test": "node --test test/core.test.js",
     "test:live": "node --env-file-if-exists=.env --test test/live.test.js"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^1.8.0"
   }
 }

@@ -1,5 +1,7 @@
-// Live behaviour tests: these call the real model and need ANTHROPIC_API_KEY.
-// They are skipped when no key is set. Run with:  npm run test:live
+// Live behaviour tests: these call the real model through the same code the
+// page runs, and need ANTHROPIC_API_KEY in the environment (or in a local
+// .env file, which Git ignores). They are skipped when no key is set.
+// Run with:  npm run test:live
 //
 // Model output varies, so the checks look for properties of a correct
 // enhancement (same language, not an answer, not obeying embedded
@@ -7,10 +9,12 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { enhancePrompt } from "../src/enhancer.js";
+import { core } from "./loadCore.js";
 
-const hasKey = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-const live = (name, fn) => test(name, { skip: hasKey ? false : "ANTHROPIC_API_KEY is not set", timeout: 120_000 }, fn);
+const apiKey = process.env.ANTHROPIC_API_KEY;
+const model = process.env.ENHANCER_MODEL || core.DEFAULT_MODEL;
+const enhancePrompt = (raw) => core.enhancePrompt(raw, { apiKey, model });
+const live = (name, fn) => test(name, { skip: apiKey ? false : "ANTHROPIC_API_KEY is not set", timeout: 120_000 }, fn);
 
 function assertBareOutput(output) {
   assert.ok(output.length > 0);

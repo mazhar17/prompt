@@ -1,5 +1,7 @@
 # Prompt Enhancer
 
+**Open the app: <https://mazhar17.github.io/Prompt-Enhancer/>**
+
 Prompt Enhancer takes a rough prompt and rewrites it into a clear, polished, well-structured prompt for another AI model.
 
 It keeps what you meant and fixes how you wrote it:
@@ -18,110 +20,74 @@ It keeps what you meant and fixes how you wrote it:
 
 The examples are illustrative; exact wording varies from run to run.
 
-## Tech stack
+## How it works
 
-- **Node.js 22+** with no build step and no web framework (built-in `http` server and built-in test runner).
-- **Anthropic SDK** (`@anthropic-ai/sdk`), the only dependency, to call a Claude model.
-- **Plain HTML, CSS and JavaScript** for the interface.
+The whole app is one file, [`index.html`](index.html), hosted on GitHub Pages. There is no server and nothing to install. The page sends your prompt straight from your browser to the Anthropic API and shows the result.
 
-## Setup
+Because there is no server to hold a shared key, **each person uses their own Anthropic API key**, and usage is billed to that key.
 
-1. Install [Node.js](https://nodejs.org/) version 22 or newer.
-2. Install the dependency:
+## Using the app
 
-   ```bash
-   npm install
-   ```
+1. Open <https://mazhar17.github.io/Prompt-Enhancer/>.
+2. The first time, open **API key and model**, paste your Anthropic API key, and click **Save**. Create a key in the [Claude Console](https://platform.claude.com/).
+3. Type or paste a prompt in the left box.
+4. Click **Enhance prompt** (or press `Ctrl + Enter`).
+5. Click **Copy** to copy the result, or **Use as input** to enhance it again.
 
-3. Create your configuration file by copying the example:
+### Settings
 
-   ```bash
-   cp .env.example .env
-   ```
+| Setting | Purpose |
+|---|---|
+| Anthropic API key | Your own key. Kept in your browser only. |
+| Model | Claude Opus 5.5 (default, best quality), Claude Sonnet 5.5, or Claude Haiku 5.5 (fastest, lowest cost). |
+| Remember the key in this browser | Ticked: the key is saved in this browser for next time. Unticked: the key is kept only until you close or reload the page. Untick it on a shared computer. |
+| Forget key | Removes the saved key from this browser. |
 
-   On Windows Command Prompt use `copy .env.example .env`.
+## Privacy and security
 
-4. Open `.env` and set `ANTHROPIC_API_KEY` to your key from the [Claude Console](https://platform.claude.com/). The `.env` file is ignored by Git, so the key is never committed.
+- Your API key is stored only in your own browser and is sent only to `api.anthropic.com`.
+- The page's security policy blocks it from contacting any other address or loading any outside code.
+- Prompts are sent to the Anthropic API to be rewritten. The app keeps no history.
+- The key is readable by anyone who can use your browser profile, so untick "Remember" on shared computers.
+- Do not paste confidential or personal data into the prompt.
 
-## Run the app locally
+## Run it locally
 
-```bash
-npm start
-```
+Download `index.html` and open it in a browser. It works the same way from your own disk.
 
-Then open <http://127.0.0.1:3000> in your browser.
+## Host your own copy
 
-1. Type or paste a prompt in the left box.
-2. Click **Enhance prompt** (or press `Ctrl + Enter`).
-3. Click **Copy** to copy the result, or **Use as input** to enhance it again.
-
-To stop the server, press `Ctrl + C` in the terminal.
-
-### Command line
-
-```bash
-npm run --silent enhance -- "write email to students about class cancel tomorrow"
-```
-
-The command prints only the enhanced prompt, so it can be piped into other tools. It also reads from standard input when no argument is given.
-
-### HTTP API
-
-`POST /api/enhance` with a JSON body:
-
-```json
-{ "prompt": "your raw prompt" }
-```
-
-Success returns `{ "enhanced": "..." }`. Failure returns `{ "error": { "code": "...", "message": "..." } }` with a matching HTTP status.
-
-## Configuration
-
-All settings are environment variables, read from `.env`.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | none (required) | Key used to call the model. |
-| `ENHANCER_MODEL` | `claude-opus-5-5` | Model used for enhancement. `claude-haiku-5-5` is a cheaper, faster option. |
-| `ENHANCER_FALLBACKS` | on | Set to `off` to disable the server-side refusal fallback (see [design notes](docs/DESIGN.md)). |
-| `HOST` | `127.0.0.1` | Address the server listens on. |
-| `PORT` | `3000` | Port the server listens on. |
-
-The server listens on `127.0.0.1` by default, so it is reachable only from your own computer. It has no login, so do not expose it to a network without adding authentication first.
+1. Fork this repository, or copy `index.html` into a repository of your own.
+2. In the repository, open **Settings → Pages**.
+3. Under **Build and deployment**, choose **Deploy from a branch**, select `main` and `/ (root)`, and save.
+4. After a minute the page is live at `https://<your-username>.github.io/<repository-name>/`.
 
 ## Tests
+
+The tests need [Node.js](https://nodejs.org/) 22 or newer and no other installation. They load the logic directly out of `index.html`, so they exercise exactly the code the page runs.
 
 ```bash
 npm test
 ```
 
-Runs the offline suite. It needs no API key and makes no network calls: the model is replaced by a stand-in. It covers:
+Runs the offline suite. It needs no API key and makes no network calls. It covers:
 
 - normal inputs,
 - very short and greeting inputs (which must still be sent for improvement),
 - multilingual inputs (Bangla, Arabic, Spanish, Japanese, mixed-language, emoji),
 - inputs containing instructions meant to override the enhancer's role,
-- output clean-up, error handling, and the HTTP layer.
+- output clean-up, error handling, and that the page is self-contained.
 
 ```bash
 npm run test:live
 ```
 
-Runs the live suite against the real model for the same four categories. It needs `ANTHROPIC_API_KEY`, uses a small amount of API credit, and is skipped when no key is set.
+Runs the live suite against the real model for the same four categories. It reads `ANTHROPIC_API_KEY` from the environment or from a local `.env` file (ignored by Git), uses a small amount of API credit, and is skipped when no key is set.
 
 ## Project structure
 
 ```
-src/
-  systemPrompt.js   The rules the enhancer follows
-  enhancer.js       Validation, request building, model call, output clean-up
-  server.js         Web server and /api/enhance endpoint
-  cli.js            Command-line entry point
-public/             Web interface (index.html, style.css, app.js)
+index.html          The whole app: interface, rules, and enhancement logic
 test/               Offline tests and live model tests
 docs/DESIGN.md      Architecture and design decisions
 ```
-
-## Privacy
-
-Prompts are sent to the Anthropic API to be rewritten. The app itself stores nothing: there is no database, no history, and prompt text is not written to logs.
