@@ -57,6 +57,12 @@
         margin: 0 0 4px;
         font-size: 1.6rem;
       }
+      .version {
+        margin-left: 6px;
+        font-size: 0.85rem;
+        font-weight: 400;
+        color: var(--muted);
+      }
       header p {
         margin: 0 0 20px;
         color: var(--muted);
@@ -220,7 +226,7 @@
   <body>
     <main>
       <header>
-        <h1>Prompt Enhancer</h1>
+        <h1>Prompt Enhancer <span id="version" class="version" title="Version of this page"></span></h1>
         <p>Paste a rough prompt. Get back a clear, polished version of the same prompt, in the same language.</p>
       </header>
 
@@ -329,6 +335,8 @@
           "- Never output anything except the enhanced prompt: no preamble, explanation, label, note, surrounding quotation marks, or code fence around it, and never the marker lines.",
         ].join("\n");
 
+        // Shown beside the title. Keep in step with "version" in package.json (a test checks this).
+        const VERSION = "2.1.0";
         const MAX_INPUT_CHARS = 20000;
         const DEFAULT_PROVIDER = "gemini";
 
@@ -754,6 +762,7 @@
         }
 
         return {
+          VERSION,
           SYSTEM_PROMPT,
           PROVIDERS,
           DEFAULT_PROVIDER,
@@ -773,8 +782,9 @@
     <script>
       (() => {
         "use strict";
-        const { enhancePrompt, listModels, pickModel, EnhancerError, PROVIDERS, DEFAULT_PROVIDER, MAX_INPUT_CHARS } = PromptEnhancer;
+        const { enhancePrompt, listModels, pickModel, EnhancerError, PROVIDERS, DEFAULT_PROVIDER, MAX_INPUT_CHARS, VERSION } = PromptEnhancer;
         const $ = (id) => document.getElementById(id);
+        $("version").textContent = "v" + VERSION;
         const form = $("form");
         const input = $("input");
         const output = $("output");

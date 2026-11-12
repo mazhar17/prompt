@@ -116,6 +116,12 @@ ENHANCER_MODEL=optional-model-name
 
 `ENHANCER_PROVIDER` is one of `gemini`, `openai`, `anthropic`, `openrouter`, `groq`, `mistral`.
 
+## Versions
+
+The version number is shown beside the title (for example `v2.1.0`), so you can tell which copy of the page you are using. After an update is published, reload with **Ctrl + F5** and check that the number has changed.
+
+When changing the app, update `VERSION` in `index.html` and `version` in `package.json` together; a test fails if they differ. Use a new patch number for fixes (2.1.0 to 2.1.1), a new minor number for new features (2.1.0 to 2.2.0).
+
 ## Project structure
 
 ```

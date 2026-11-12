@@ -486,6 +486,14 @@ test("index.html is self-contained and may only contact the listed providers", (
   assert.deepEqual(allowed, used, "the allowed hosts are exactly the providers' hosts");
 });
 
+test("the version shown beside the title matches package.json", async () => {
+  const { readFileSync } = await import("node:fs");
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.match(core.VERSION, /^\d+\.\d+\.\d+$/);
+  assert.equal(core.VERSION, pkg.version);
+  assert.match(html, /<h1>[^<]*<span id="version"/, "the title has a version slot");
+});
+
 test("index.html contains no API key", () => {
   assert.doesNotMatch(html, /sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{20,}|gsk_[A-Za-z0-9]{20,}/);
 });

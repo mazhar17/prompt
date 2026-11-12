@@ -1,6 +1,6 @@
 {
   "name": "prompt-enhancer",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A single-page tool that rewrites a raw prompt into a clear, polished prompt for another AI model.",
   "type": "module",
   "private": true,
