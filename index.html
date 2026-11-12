@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- The page may only talk to the Anthropic API; nothing else can be loaded or contacted. -->
+    <!-- The page may only talk to the AI providers listed here; nothing else can be loaded or contacted. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; connect-src https://api.anthropic.com; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; connect-src https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://openrouter.ai https://api.groq.com https://api.mistral.ai; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
     />
     <meta name="referrer" content="no-referrer" />
     <meta name="description" content="Rewrites a rough prompt into a clear, polished prompt for an AI model, in the same language." />
@@ -81,7 +81,7 @@
       }
       .settings {
         display: grid;
-        grid-template-columns: 2fr 1fr;
+        grid-template-columns: 1fr 1fr;
         gap: 12px 16px;
         padding: 4px 14px 14px;
       }
@@ -92,6 +92,14 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
+        min-width: 0;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      .row > :first-child {
+        flex: 1;
         min-width: 0;
       }
       .check {
@@ -141,6 +149,7 @@
       }
       textarea,
       input[type="password"],
+      input[type="text"],
       select {
         width: 100%;
         padding: 10px 12px;
@@ -176,6 +185,7 @@
         border: 1px solid var(--border);
         border-radius: 8px;
         cursor: pointer;
+        white-space: nowrap;
       }
       button.primary {
         background: var(--accent);
@@ -215,19 +225,23 @@
       </header>
 
       <details id="setup">
-        <summary>API key and model <span id="key-state" class="muted"></span></summary>
+        <summary>AI provider and API key <span id="key-state" class="muted"></span></summary>
         <div class="settings">
           <div class="field">
-            <label for="api-key">Anthropic API key</label>
-            <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-..." />
+            <label for="provider">AI provider</label>
+            <select id="provider"></select>
           </div>
           <div class="field">
             <label for="model">Model</label>
-            <select id="model">
-              <option value="claude-opus-5-5">Claude Opus 5.5 (best quality)</option>
-              <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (balanced)</option>
-              <option value="claude-haiku-5-5">Claude Haiku 5.5 (fastest, lowest cost)</option>
-            </select>
+            <div class="row">
+              <input id="model" type="text" list="model-list" autocomplete="off" spellcheck="false" placeholder="Model name" />
+              <button id="load-models" type="button">Load models</button>
+            </div>
+            <datalist id="model-list"></datalist>
+          </div>
+          <div class="field wide">
+            <label for="api-key"><span id="key-label">API key</span></label>
+            <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key here" />
           </div>
           <label class="check wide">
             <input id="remember" type="checkbox" checked />
@@ -235,13 +249,15 @@
           </label>
           <div class="actions wide">
             <button id="save-key" type="button" class="primary">Save</button>
-            <button id="forget-key" type="button">Forget key</button>
+            <button id="forget-key" type="button">Forget this key</button>
           </div>
           <p class="note wide">
-            This page has no server. Each person uses their own API key, created in the
-            <a href="https://platform.claude.com/" target="_blank" rel="noopener noreferrer">Claude Console</a>;
-            usage is billed to that key. The key stays in your browser and is sent only to
-            <code>api.anthropic.com</code>, together with the prompt you enhance.
+            <span id="provider-note"></span>
+            <a id="key-link" href="#" target="_blank" rel="noopener noreferrer">Get a key</a>.
+          </p>
+          <p class="note wide">
+            This page has no server. You use your own API key, and any usage is counted against that key. The key
+            stays in your browser and is sent only to the provider you select, together with the prompt you enhance.
           </p>
         </div>
       </details>
@@ -313,15 +329,8 @@
           "- Never output anything except the enhanced prompt: no preamble, explanation, label, note, surrounding quotation marks, or code fence around it, and never the marker lines.",
         ].join("\n");
 
-        const API_URL = "https://api.anthropic.com/v1/messages";
-        const API_VERSION = "2026-10-21";
-        const DEFAULT_MODEL = "claude-opus-5-5";
         const MAX_INPUT_CHARS = 20000;
-        const MAX_OUTPUT_TOKENS = 16000;
-
-        // Models that accept the server-side refusal fallback parameter.
-        const FALLBACK_BETA = "server-side-fallback-2026-07-01";
-        const FALLBACK_MODELS = ["claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-fable-5-1"];
+        const DEFAULT_PROVIDER = "gemini";
 
         /** An error whose message is safe to show to the user. */
         class EnhancerError extends Error {
@@ -368,33 +377,205 @@
           ].join("\n");
         }
 
-        /** Builds the request body. The system prompt is always the constant. */
-        function buildRequest(rawPrompt, { model = DEFAULT_MODEL, fallbacks = true, nonce } = {}) {
-          const request = {
-            model,
-            max_tokens: MAX_OUTPUT_TOKENS,
-            system: SYSTEM_PROMPT,
-            // Rewriting is a light task; low effort keeps it fast and cheap.
-            output_config: { effort: "low" },
-            messages: [{ role: "user", content: buildUserMessage(rawPrompt, nonce) }],
+        const TOO_LONG = () =>
+          new EnhancerError("OUTPUT_TOO_LONG", "The enhanced prompt was cut off because it was too long. Try a shorter prompt.");
+        const REFUSED = () => new EnhancerError("REFUSED", "The model declined to rewrite this prompt.");
+
+        // ---- Providers -------------------------------------------------------
+        // Each provider knows how to build its request from the fixed system
+        // prompt and the wrapped user message, and how to read its response.
+        // The API key always travels in a header, never in the URL.
+
+        const NOT_CHAT = /embed|whisper|tts|dall-e|image|audio|moderation|realtime|transcri|guard|rerank|ocr|sora|speech|video/i;
+
+        /** Providers that speak the OpenAI "chat completions" format. */
+        function openAICompatible(config) {
+          const headers = (apiKey) => ({ "content-type": "application/json", authorization: "Bearer " + apiKey });
+          return {
+            ...config,
+            buildRequest(rawPrompt, { model, apiKey, nonce }) {
+              return {
+                url: config.baseUrl + "/chat/completions",
+                headers: headers(apiKey),
+                body: {
+                  model,
+                  messages: [
+                    { role: "system", content: SYSTEM_PROMPT },
+                    { role: "user", content: buildUserMessage(rawPrompt, nonce) },
+                  ],
+                },
+              };
+            },
+            parseResponse(data) {
+              const choice = data && Array.isArray(data.choices) ? data.choices[0] : null;
+              if (!choice) return "";
+              if (choice.finish_reason === "length") throw TOO_LONG();
+              const message = choice.message || {};
+              if (choice.finish_reason === "content_filter" || message.refusal) throw REFUSED();
+              if (typeof message.content === "string") return message.content;
+              if (Array.isArray(message.content)) {
+                return message.content
+                  .filter((part) => part && part.type === "text" && typeof part.text === "string")
+                  .map((part) => part.text)
+                  .join("");
+              }
+              return "";
+            },
+            buildModelsRequest(apiKey) {
+              return { url: config.baseUrl + "/models", headers: headers(apiKey) };
+            },
+            parseModels(data) {
+              return (data && Array.isArray(data.data) ? data.data : [])
+                .map((entry) => entry && entry.id)
+                .filter((id) => typeof id === "string" && !NOT_CHAT.test(id));
+            },
           };
-          // If the model declines on policy grounds, the API retries on a fallback model.
-          if (fallbacks && FALLBACK_MODELS.includes(model)) request.fallbacks = "default";
-          return request;
         }
 
-        function buildHeaders(apiKey, request) {
-          const headers = {
-            "content-type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": API_VERSION,
-            // Required by the API for requests sent straight from a browser.
-            "anthropic-dangerous-direct-browser-access": "true",
-          };
-          if (request.fallbacks) headers["anthropic-beta"] = FALLBACK_BETA;
-          return headers;
+        const ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01";
+        const ANTHROPIC_FALLBACK_MODELS = ["claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-fable-5-1"];
+        const anthropicHeaders = (apiKey) => ({
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2026-10-21",
+          // Required by the API for requests sent straight from a browser.
+          "anthropic-dangerous-direct-browser-access": "true",
+        });
+
+        const PROVIDERS = {
+          gemini: {
+            label: "Google Gemini",
+            host: "https://generativelanguage.googleapis.com",
+            keyUrl: "https://aistudio.google.com/apikey",
+            note: "Has a free tier. Create a key in Google AI Studio.",
+            defaultModel: "gemini-3.8-flash",
+            suggested: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"],
+            prefer: /^gemini-[\d.]+-flash$/,
+            buildRequest(rawPrompt, { model, apiKey, nonce }) {
+              const name = String(model).replace(/^models\//, "");
+              return {
+                url: this.host + "/v1beta/models/" + encodeURIComponent(name) + ":generateContent",
+                headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+                body: {
+                  systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+                  contents: [{ role: "user", parts: [{ text: buildUserMessage(rawPrompt, nonce) }] }],
+                },
+              };
+            },
+            parseResponse(data) {
+              if (data && data.promptFeedback && data.promptFeedback.blockReason) throw REFUSED();
+              const candidate = data && Array.isArray(data.candidates) ? data.candidates[0] : null;
+              if (!candidate) return "";
+              if (candidate.finishReason === "MAX_TOKENS") throw TOO_LONG();
+              if (["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "RECITATION", "SPII"].includes(candidate.finishReason)) throw REFUSED();
+              const parts = candidate.content && Array.isArray(candidate.content.parts) ? candidate.content.parts : [];
+              return parts
+                .filter((part) => part && !part.thought && typeof part.text === "string")
+                .map((part) => part.text)
+                .join("");
+            },
+            buildModelsRequest(apiKey) {
+              return { url: this.host + "/v1beta/models?pageSize=1000", headers: { "x-goog-api-key": apiKey } };
+            },
+            parseModels(data) {
+              return (data && Array.isArray(data.models) ? data.models : [])
+                .filter((entry) => (entry.supportedGenerationMethods || []).includes("generateContent"))
+                .map((entry) => String(entry.name || "").replace(/^models\//, ""))
+                .filter((id) => id && !NOT_CHAT.test(id));
+            },
+          },
+
+          openai: openAICompatible({
+            label: "OpenAI (GPT)",
+            baseUrl: "https://api.openai.com/v1",
+            keyUrl: "https://platform.openai.com/api-keys",
+            note: "Paid: needs credit on your OpenAI account.",
+            defaultModel: "gpt-6-luna",
+            suggested: ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"],
+            prefer: /^gpt-/,
+          }),
+
+          anthropic: {
+            label: "Anthropic (Claude)",
+            host: "https://api.anthropic.com",
+            keyUrl: "https://platform.claude.com/",
+            note: "Paid: needs credit on your Anthropic account.",
+            defaultModel: "claude-opus-5-5",
+            suggested: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+            prefer: /^claude-/,
+            buildRequest(rawPrompt, { model, apiKey, nonce, fallbacks = true }) {
+              const headers = anthropicHeaders(apiKey);
+              const body = {
+                model,
+                max_tokens: 16000,
+                system: SYSTEM_PROMPT,
+                // Rewriting is a light task; low effort keeps it fast and cheap.
+                output_config: { effort: "low" },
+                messages: [{ role: "user", content: buildUserMessage(rawPrompt, nonce) }],
+              };
+              // If the model declines on policy grounds, the API retries on a fallback model.
+              if (fallbacks && ANTHROPIC_FALLBACK_MODELS.includes(model)) {
+                body.fallbacks = "default";
+                headers["anthropic-beta"] = ANTHROPIC_FALLBACK_BETA;
+              }
+              return { url: this.host + "/v1/messages", headers, body, optional: Boolean(body.fallbacks) };
+            },
+            parseResponse(data) {
+              if (data && data.stop_reason === "refusal") throw REFUSED();
+              if (data && data.stop_reason === "max_tokens") throw TOO_LONG();
+              return (data && Array.isArray(data.content) ? data.content : [])
+                .filter((block) => block.type === "text")
+                .map((block) => block.text)
+                .join("");
+            },
+            buildModelsRequest(apiKey) {
+              return { url: this.host + "/v1/models?limit=1000", headers: anthropicHeaders(apiKey) };
+            },
+            parseModels(data) {
+              return (data && Array.isArray(data.data) ? data.data : []).map((entry) => entry.id).filter(Boolean);
+            },
+          },
+
+          openrouter: openAICompatible({
+            label: "OpenRouter (many models, some free)",
+            baseUrl: "https://openrouter.ai/api/v1",
+            keyUrl: "https://openrouter.ai/keys",
+            note: "One key for models from many companies. Models whose name ends in “:free” cost nothing.",
+            defaultModel: "openrouter/free",
+            suggested: ["openrouter/free", "openrouter/auto"],
+            prefer: /:free$/,
+          }),
+
+          groq: openAICompatible({
+            label: "Groq (open models)",
+            baseUrl: "https://api.groq.com/openai/v1",
+            keyUrl: "https://console.groq.com/keys",
+            note: "Has a free tier. After saving your key, click “Load models” and pick one.",
+            defaultModel: "",
+            suggested: [],
+            prefer: /llama|gpt-oss|qwen/i,
+          }),
+
+          mistral: openAICompatible({
+            label: "Mistral",
+            baseUrl: "https://api.mistral.ai/v1",
+            keyUrl: "https://console.mistral.ai/api-keys",
+            note: "Has a free tier.",
+            defaultModel: "mistral-small-latest",
+            suggested: ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"],
+            prefer: /^mistral-(small|medium|large)/,
+          }),
+        };
+
+        function getProvider(id) {
+          const provider = Object.prototype.hasOwnProperty.call(PROVIDERS, id) ? PROVIDERS[id] : null;
+          if (!provider) throw new EnhancerError("BAD_PROVIDER", "Unknown AI provider.");
+          return provider;
         }
 
+        // ---- Output clean-up -------------------------------------------------
+
+        const THINK_BLOCK = /^\s*<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/i;
         const MARKER_LINE = /^[ \t]*<<<(?:END_)?RAW_PROMPT [0-9a-f]+>>>[ \t]*$/gm;
         const WHOLE_FENCE = /^```[\w-]*[ \t]*\r?\n([\s\S]*?)\r?\n```$/;
         const LABEL = /^(?:\*\*|__)?(?:enhanced|improved|rewritten|revised|polished|refined)\s+prompt\s*[:：](?:\*\*|__)?\s*/i;
@@ -408,12 +589,15 @@
 
         /**
          * Safety net for the "output only the enhanced prompt" rule: removes
-         * wrappers the model may add despite its instructions. A wrapper is only
+         * wrappers a model may add despite its instructions. A wrapper is only
          * removed when the raw prompt did not have the same wrapper itself.
          */
         function cleanOutput(text, rawPrompt = "") {
           const raw = rawPrompt.trim();
-          let out = String(text).replace(MARKER_LINE, "").trim();
+          let out = String(text);
+          // Some open models print their reasoning first, inside <think> tags.
+          if (!THINK_BLOCK.test(raw)) out = out.replace(THINK_BLOCK, "");
+          out = out.replace(MARKER_LINE, "").trim();
 
           const fence = out.match(WHOLE_FENCE);
           if (fence && !raw.startsWith("```")) out = fence[1].trim();
@@ -430,14 +614,14 @@
           return out;
         }
 
-        async function send(fetchFn, apiKey, request) {
+        // ---- Network ---------------------------------------------------------
+
+        async function send(fetchFn, request) {
+          const init = { method: request.body ? "POST" : "GET", headers: request.headers };
+          if (request.body) init.body = JSON.stringify(request.body);
           let response;
           try {
-            response = await fetchFn(API_URL, {
-              method: "POST",
-              headers: buildHeaders(apiKey, request),
-              body: JSON.stringify(request),
-            });
+            response = await fetchFn(request.url, init);
           } catch {
             throw new EnhancerError("NETWORK", "Could not reach the AI service. Check your internet connection.");
           }
@@ -445,67 +629,95 @@
           return { status: response.status, ok: response.ok, data };
         }
 
-        function apiError(status, data) {
-          const detail = data && data.error && data.error.message ? data.error.message : "no details";
-          if (status === 401) return new EnhancerError("AUTH", "The API key was not accepted. Check it under “API key and model”.");
-          if (status === 403) return new EnhancerError("AUTH", "This API key is not allowed to use the selected model.");
-          if (status === 429) return new EnhancerError("RATE_LIMITED", "Rate limit reached. Wait a moment and try again.");
+        function errorDetail(data) {
+          const error = Array.isArray(data) ? data[0] && data[0].error : data && data.error;
+          if (error && typeof error === "object" && error.message) return String(error.message);
+          if (typeof error === "string") return error;
+          if (data && typeof data.message === "string") return data.message;
+          if (data && typeof data.detail === "string") return data.detail;
+          return "no details";
+        }
+
+        function apiError(status, data, label) {
+          const detail = errorDetail(data).slice(0, 300);
+          if (status === 401 || (status === 400 && /api[ _-]?key/i.test(detail))) {
+            return new EnhancerError("AUTH", "The " + label + " API key was not accepted. Check it under “AI provider and API key”.");
+          }
+          if (status === 403) return new EnhancerError("AUTH", "This API key is not allowed to use the selected model: " + detail);
+          if (status === 404) return new EnhancerError("MODEL", "Model not found. Click “Load models” and pick one from the list.");
+          if (status === 402) return new EnhancerError("QUOTA", "This key has no credit left with " + label + ".");
+          if (status === 429) return new EnhancerError("RATE_LIMITED", "Rate limit or quota reached for this key. Wait a moment, or try another model or provider.");
           if (status >= 500) return new EnhancerError("SERVICE", "The AI service is busy or unavailable (" + status + "). Try again shortly.");
           return new EnhancerError("API_ERROR", "The AI service rejected the request (" + status + "): " + detail);
         }
 
+        function requireKey(apiKey) {
+          const key = (apiKey || "").trim();
+          if (!key) throw new EnhancerError("NO_KEY", "Add your API key under “AI provider and API key” first.");
+          return key;
+        }
+
         /**
          * Enhances a raw prompt and returns only the enhanced prompt text.
-         * options: { apiKey, model, fallbacks, fetch }
+         * options: { provider, apiKey, model, fetch }
          */
         async function enhancePrompt(rawPrompt, options = {}) {
           validateInput(rawPrompt);
-          const apiKey = (options.apiKey || "").trim();
-          if (!apiKey) {
-            throw new EnhancerError("NO_KEY", "Add your Anthropic API key under “API key and model” first.");
-          }
+          const provider = getProvider(options.provider || DEFAULT_PROVIDER);
+          const apiKey = requireKey(options.apiKey);
+          const model = (options.model || provider.defaultModel || "").trim();
+          if (!model) throw new EnhancerError("NO_MODEL", "Choose a model first: click “Load models” and pick one.");
           const fetchFn = options.fetch || fetch;
-          const model = options.model || DEFAULT_MODEL;
 
-          let request = buildRequest(rawPrompt, { model, fallbacks: options.fallbacks !== false });
-          let result = await send(fetchFn, apiKey, request);
-          if (result.status === 400 && request.fallbacks) {
-            // The fallback option is a beta feature; if it is rejected, retry once without it.
-            request = buildRequest(rawPrompt, { model, fallbacks: false });
-            result = await send(fetchFn, apiKey, request);
+          let request = provider.buildRequest(rawPrompt, { model, apiKey });
+          let result = await send(fetchFn, request);
+          if (result.status === 400 && request.optional) {
+            // An optional beta feature was rejected; retry once without it.
+            request = provider.buildRequest(rawPrompt, { model, apiKey, fallbacks: false });
+            result = await send(fetchFn, request);
           }
-          if (!result.ok) throw apiError(result.status, result.data);
+          if (!result.ok) throw apiError(result.status, result.data, provider.label);
 
-          const data = result.data || {};
-          if (data.stop_reason === "refusal") {
-            throw new EnhancerError("REFUSED", "The model declined to rewrite this prompt.");
-          }
-          if (data.stop_reason === "max_tokens") {
-            throw new EnhancerError("OUTPUT_TOO_LONG", "The enhanced prompt was cut off because it was too long. Try a shorter prompt.");
-          }
-          const text = (Array.isArray(data.content) ? data.content : [])
-            .filter((block) => block.type === "text")
-            .map((block) => block.text)
-            .join("");
-          const enhanced = cleanOutput(text, rawPrompt);
+          const enhanced = cleanOutput(provider.parseResponse(result.data), rawPrompt);
           if (enhanced === "") {
-            throw new EnhancerError("EMPTY_OUTPUT", "The model returned no text. Please try again.");
+            throw new EnhancerError("EMPTY_OUTPUT", "The model returned no text. Try again, or try another model.");
           }
           return enhanced;
         }
 
+        /** Asks the provider which models this key can use. Returns sorted model names. */
+        async function listModels(options = {}) {
+          const provider = getProvider(options.provider || DEFAULT_PROVIDER);
+          const apiKey = requireKey(options.apiKey);
+          const result = await send(options.fetch || fetch, provider.buildModelsRequest(apiKey));
+          if (!result.ok) throw apiError(result.status, result.data, provider.label);
+          const names = [...new Set(provider.parseModels(result.data))];
+          return names.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+        }
+
+        /** Picks a sensible model from a loaded list, keeping the current one if it is available. */
+        function pickModel(providerId, available, current = "") {
+          const provider = getProvider(providerId);
+          if (!available.length) return current || provider.defaultModel;
+          if (current && available.includes(current)) return current;
+          const suggested = provider.suggested.find((name) => available.includes(name));
+          if (suggested) return suggested;
+          const preferred = available.filter((name) => provider.prefer.test(name));
+          return preferred.length ? preferred[preferred.length - 1] : available[0];
+        }
+
         return {
           SYSTEM_PROMPT,
-          API_URL,
-          DEFAULT_MODEL,
+          PROVIDERS,
+          DEFAULT_PROVIDER,
           MAX_INPUT_CHARS,
           EnhancerError,
           validateInput,
           buildUserMessage,
-          buildRequest,
-          buildHeaders,
           cleanOutput,
           enhancePrompt,
+          listModels,
+          pickModel,
         };
       })();
     </script>
@@ -514,7 +726,7 @@
     <script>
       (() => {
         "use strict";
-        const { enhancePrompt, EnhancerError, MAX_INPUT_CHARS, DEFAULT_MODEL } = PromptEnhancer;
+        const { enhancePrompt, listModels, pickModel, EnhancerError, PROVIDERS, DEFAULT_PROVIDER, MAX_INPUT_CHARS } = PromptEnhancer;
         const $ = (id) => document.getElementById(id);
         const form = $("form");
         const input = $("input");
@@ -525,13 +737,17 @@
         const count = $("count");
         const statusEl = $("status");
         const setup = $("setup");
+        const providerSelect = $("provider");
+        const modelInput = $("model");
+        const modelList = $("model-list");
+        const loadBtn = $("load-models");
         const keyInput = $("api-key");
-        const modelSelect = $("model");
         const remember = $("remember");
         const keyState = $("key-state");
 
-        const KEY_STORE = "promptEnhancer.apiKey";
-        const MODEL_STORE = "promptEnhancer.model";
+        const PROVIDER_STORE = "promptEnhancer.provider";
+        const KEYS_STORE = "promptEnhancer.keys";
+        const MODELS_STORE = "promptEnhancer.models";
 
         // Browser storage can be unavailable (private windows, blocked site data).
         const store = {
@@ -542,23 +758,32 @@
               return null;
             }
           },
+          getObject(name) {
+            try {
+              const value = JSON.parse(localStorage.getItem(name) || "{}");
+              return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+            } catch {
+              return {};
+            }
+          },
           set(name, value) {
             try {
-              localStorage.setItem(name, value);
+              localStorage.setItem(name, typeof value === "string" ? value : JSON.stringify(value));
               return true;
             } catch {
               return false;
             }
           },
-          remove(name) {
-            try {
-              localStorage.removeItem(name);
-            } catch {}
-          },
         };
 
-        let apiKey = store.get(KEY_STORE) || "";
+        const savedKeys = store.getObject(KEYS_STORE); // keys kept in this browser
+        const keys = { ...savedKeys }; // keys in use during this visit
+        const models = store.getObject(MODELS_STORE);
+        let providerId = Object.prototype.hasOwnProperty.call(PROVIDERS, store.get(PROVIDER_STORE)) ? store.get(PROVIDER_STORE) : DEFAULT_PROVIDER;
         let busy = false;
+
+        const provider = () => PROVIDERS[providerId];
+        const currentKey = () => keys[providerId] || "";
 
         function setStatus(message, kind = "") {
           statusEl.textContent = message;
@@ -573,15 +798,65 @@
           enhanceBtn.disabled = busy || over || input.value.trim() === "";
           copyBtn.disabled = output.value === "";
           reuseBtn.disabled = output.value === "" || busy;
-          keyState.textContent = apiKey ? "(key set)" : "(key needed)";
+          loadBtn.disabled = busy;
+          keyState.textContent = "(" + provider().label + ": " + (currentKey() ? "key set" : "key needed") + ")";
+        }
+
+        function setModelOptions(names) {
+          modelList.replaceChildren(
+            ...names.map((name) => {
+              const option = document.createElement("option");
+              option.value = name;
+              return option;
+            }),
+          );
+        }
+
+        function showProvider() {
+          const info = provider();
+          providerSelect.value = providerId;
+          $("key-label").textContent = info.label + " API key";
+          $("provider-note").textContent = info.note + " ";
+          $("key-link").href = info.keyUrl;
+          keyInput.value = "";
+          keyInput.placeholder = currentKey() ? "Key saved. Paste a new one to replace it." : "Paste your key here";
+          modelInput.value = models[providerId] || info.defaultModel;
+          setModelOptions(info.suggested);
+          refresh();
+        }
+
+        function saveModel() {
+          models[providerId] = modelInput.value.trim();
+          store.set(MODELS_STORE, models);
+        }
+
+        async function loadModels(quiet = false) {
+          if (!currentKey()) {
+            if (!quiet) setStatus("Save your API key first, then load the models.", "error");
+            return;
+          }
+          const forProvider = providerId;
+          loadBtn.textContent = "Loading…";
+          try {
+            const names = await listModels({ provider: forProvider, apiKey: currentKey() });
+            if (forProvider !== providerId) return;
+            setModelOptions(names);
+            modelInput.value = pickModel(forProvider, names, modelInput.value.trim());
+            saveModel();
+            if (!quiet) setStatus(names.length + " models loaded. Choose one in the Model box.", "ok");
+          } catch (error) {
+            if (!quiet) setStatus(error instanceof EnhancerError ? error.message : "Could not load the models.", "error");
+          } finally {
+            loadBtn.textContent = "Load models";
+          }
         }
 
         async function enhance() {
           if (enhanceBtn.disabled) return;
-          if (!apiKey) {
+          if (!currentKey()) {
             setup.open = true;
             keyInput.focus();
-            setStatus("Add your Anthropic API key first, then click Save.", "error");
+            setStatus("Add your " + provider().label + " API key first, then click Save.", "error");
             return;
           }
           busy = true;
@@ -589,11 +864,16 @@
           setStatus("");
           refresh();
           try {
-            output.value = await enhancePrompt(input.value, { apiKey, model: modelSelect.value });
+            output.value = await enhancePrompt(input.value, {
+              provider: providerId,
+              apiKey: currentKey(),
+              model: modelInput.value,
+            });
             setStatus("Done.", "ok");
           } catch (error) {
-            if (error instanceof EnhancerError && error.code === "AUTH") setup.open = true;
-            setStatus(error instanceof EnhancerError ? error.message : "Something went wrong. Please try again.", "error");
+            const known = error instanceof EnhancerError;
+            if (known && ["AUTH", "MODEL", "NO_MODEL"].includes(error.code)) setup.open = true;
+            setStatus(known ? error.message : "Something went wrong. Please try again.", "error");
           } finally {
             busy = false;
             enhanceBtn.textContent = "Enhance prompt";
@@ -639,38 +919,55 @@
           input.focus();
         });
 
+        providerSelect.addEventListener("change", () => {
+          providerId = providerSelect.value;
+          store.set(PROVIDER_STORE, providerId);
+          setStatus("");
+          showProvider();
+          loadModels(true);
+        });
+
+        modelInput.addEventListener("change", saveModel);
+        loadBtn.addEventListener("click", () => loadModels());
+
         $("save-key").addEventListener("click", () => {
           const entered = keyInput.value.trim();
-          if (entered) apiKey = entered;
-          keyInput.value = "";
-          if (!apiKey) {
+          if (entered) keys[providerId] = entered;
+          if (!currentKey()) {
             setStatus("Paste your API key into the box, then click Save.", "error");
             return;
           }
           let saved = false;
-          if (remember.checked) saved = store.set(KEY_STORE, apiKey);
-          else store.remove(KEY_STORE);
-          setup.open = false;
+          if (remember.checked) {
+            savedKeys[providerId] = currentKey();
+            saved = store.set(KEYS_STORE, savedKeys);
+          } else {
+            delete savedKeys[providerId];
+            store.set(KEYS_STORE, savedKeys);
+          }
+          saveModel();
+          showProvider();
           setStatus(saved ? "Key saved in this browser." : "Key set for this visit only; it is not stored.", "ok");
-          refresh();
-          input.focus();
+          loadModels(true);
         });
 
         $("forget-key").addEventListener("click", () => {
-          apiKey = "";
-          keyInput.value = "";
-          store.remove(KEY_STORE);
-          setStatus("Key removed from this browser.", "ok");
-          refresh();
+          delete keys[providerId];
+          delete savedKeys[providerId];
+          store.set(KEYS_STORE, savedKeys);
+          showProvider();
+          setStatus("The " + provider().label + " key was removed from this browser.", "ok");
         });
 
-        modelSelect.addEventListener("change", () => store.set(MODEL_STORE, modelSelect.value));
-
-        const savedModel = store.get(MODEL_STORE) || DEFAULT_MODEL;
-        if ([...modelSelect.options].some((option) => option.value === savedModel)) modelSelect.value = savedModel;
-        setup.open = !apiKey;
-        refresh();
-        if (apiKey) input.focus();
+        for (const [id, info] of Object.entries(PROVIDERS)) {
+          const option = document.createElement("option");
+          option.value = id;
+          option.textContent = info.label;
+          providerSelect.append(option);
+        }
+        showProvider();
+        setup.open = !currentKey();
+        if (currentKey()) input.focus();
       })();
     </script>
   </body>

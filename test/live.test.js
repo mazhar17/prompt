@@ -1,6 +1,11 @@
-// Live behaviour tests: these call the real model through the same code the
-// page runs, and need ANTHROPIC_API_KEY in the environment (or in a local
-// .env file, which Git ignores). They are skipped when no key is set.
+// Live behaviour tests: these call a real model through the same code the
+// page runs. They are skipped when no key is set. Settings come from the
+// environment, or from a local .env file (which Git ignores):
+//
+//   ENHANCER_PROVIDER   gemini (default), openai, anthropic, openrouter, groq, mistral
+//   ENHANCER_API_KEY    your key for that provider
+//   ENHANCER_MODEL      optional; defaults to the provider's default model
+//
 // Run with:  npm run test:live
 //
 // Model output varies, so the checks look for properties of a correct
@@ -11,10 +16,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { core } from "./loadCore.js";
 
-const apiKey = process.env.ANTHROPIC_API_KEY;
-const model = process.env.ENHANCER_MODEL || core.DEFAULT_MODEL;
-const enhancePrompt = (raw) => core.enhancePrompt(raw, { apiKey, model });
-const live = (name, fn) => test(name, { skip: apiKey ? false : "ANTHROPIC_API_KEY is not set", timeout: 120_000 }, fn);
+const provider = process.env.ENHANCER_PROVIDER || core.DEFAULT_PROVIDER;
+const apiKey = process.env.ENHANCER_API_KEY;
+const model = process.env.ENHANCER_MODEL || undefined;
+const enhancePrompt = (raw) => core.enhancePrompt(raw, { provider, apiKey, model });
+const live = (name, fn) =>
+  test(`${provider}: ${name}`, { skip: apiKey ? false : "ENHANCER_API_KEY is not set", timeout: 120_000 }, fn);
 
 function assertBareOutput(output) {
   assert.ok(output.length > 0);
