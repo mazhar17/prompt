@@ -1,6 +1,6 @@
 # Prompt Enhancer
 
-**Open the app: <https://mazhar17.github.io/Prompt-Enhancer/>**
+**Open the app: <https://mazhar17.github.io/prompt/>**
 
 Prompt Enhancer takes a rough prompt and rewrites it into a clear, polished, well-structured prompt for another AI model.
 
@@ -43,7 +43,7 @@ You can save a key for several providers and switch between them at any time.
 
 ## Using the app
 
-1. Open <https://mazhar17.github.io/Prompt-Enhancer/>.
+1. Open <https://mazhar17.github.io/prompt/>.
 2. The first time, open **AI provider and API key**:
    1. Choose a provider.
    2. Paste your API key for that provider and click **Save**.
