@@ -1,14 +1,13 @@
 {
   "name": "prompt-enhancer",
-  "version": "2.1.0",
-  "description": "A single-page tool that rewrites a raw prompt into a clear, polished prompt for another AI model.",
+  "version": "3.0.0",
+  "description": "A single-page tool that turns a rough request into a clear, well-structured prompt for an AI model.",
   "type": "module",
   "private": true,
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test test/core.test.js",
-    "test:live": "node --env-file-if-exists=.env --test test/live.test.js"
+    "test": "node --test test/core.test.js"
   }
 }
